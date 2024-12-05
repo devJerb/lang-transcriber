@@ -20,6 +20,7 @@ TRANSCRIBE_ERROR = "No text found"
 TRANSLATION_ERROR = "Invalid translation"
 MODEL = "gpt-4o-mini"
 
+# ✋🏻🛑⛔️
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 
