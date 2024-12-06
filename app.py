@@ -183,7 +183,7 @@ def main():
 
             # Display transcription
             st.subheader("Transcribed Text")
-            st.text_area("Transcription", value=transcription, height=500)
+            st.text_area("Transcription", value=transcription, height=700)
 
             # Translation
             if transcription != TRANSCRIBE_ERROR:
@@ -194,7 +194,7 @@ def main():
 
                 # Display translation
                 st.subheader("Translated Text")
-                st.text_area("Translation", value=translation, height=500)
+                st.text_area("Translation", value=translation, height=700)
             else:
                 st.warning("No text could be transcribed from the image.")
         else:
