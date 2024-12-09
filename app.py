@@ -1,28 +1,20 @@
-import os
-import base64
 import math
-from typing import Optional, List
-
 import streamlit as st
-from openai import OpenAI
-from filetype import filetype
-from dotenv import load_dotenv, find_dotenv
+from typing import List
 
-# Load environment variables
-load_dotenv(find_dotenv())
-
-# LLM constants
-TRANSCRIBE_ERROR = "No text found"
-TRANSLATION_ERROR = "Invalid translation"
-
-# Initialize OpenAI client
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-gpt_client = OpenAI(api_key=OPENAI_API_KEY)
+from model import (
+    gpt_transcribe,
+    gpt_response,
+    claude_transcribe,
+    claude_response,
+    TRANSCRIBE_ERROR,
+    TRANSLATION_ERROR,
+)
 
 
-def split_text_into_batches(text: str, max_tokens: int = 1000) -> List[str]:
+def split_text_batches(text: str, max_tokens: int = 1000) -> List[str]:
     """
-    Split long text into batches respecting approximate token limit.
+    Split text into batches respecting approximate token limit.
 
     Args:
         text (str): Input text to be split
@@ -31,181 +23,94 @@ def split_text_into_batches(text: str, max_tokens: int = 1000) -> List[str]:
     Returns:
         List[str]: List of text batches
     """
-    # Rough estimate: 1 token is approximately 4 characters
-    tokens_estimate = len(text) // 4
-
-    # If text is short enough, return as single batch
-    if tokens_estimate <= max_tokens:
+    # Rough token estimate: 1 token ≈ 4 characters
+    if len(text) / 4 <= max_tokens:
         return [text]
 
     # Calculate number of batches
-    num_batches = math.ceil(tokens_estimate / max_tokens)
-
-    # Split text into roughly equal parts
+    num_batches = math.ceil(len(text) / (max_tokens * 4))
     batch_size = len(text) // num_batches
-    batches = []
 
-    for i in range(num_batches):
-        start = i * batch_size
-        end = (i + 1) * batch_size if i < num_batches - 1 else len(text)
-        batches.append(text[start:end])
-
-    return batches
+    return [text[i * batch_size : (i + 1) * batch_size] for i in range(num_batches)]
 
 
-def transcribe_image(
-    image: bytes, content_type: str, model: Optional[str] = "gpt-4o-mini"
-) -> str:
+def translate_text(text: str, model: str = "GPT") -> str:
     """
-    Transcribe text from an image using OpenAI's GPT-4o vision model.
-
-    Args:
-        image (bytes): Image data
-        content_type (str): MIME type of the image
-
-    Returns:
-        str: Transcribed text or error message
-    """
-    # Encode image to base64
-    base64_image = base64.b64encode(image).decode("utf-8")
-
-    # Create chat completion request
-    chat_response = gpt_client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": 'You are an AI transcribing text from images. Guidelines: 1. Transcribe clear, legible text. 2. Respect original formatting. 3. If no clear text is visible or if the content is irrelevant, respond with "No recognizable text content". 4. Transcribe exactly as seen.',
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Transcribe the clear, legible text from this image. If no relevant text, respond with '{TRANSCRIBE_ERROR}'.",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{content_type};base64,{base64_image}"
-                        },
-                    },
-                ],
-            },
-        ],
-    )
-
-    return chat_response.choices[0].message.content.strip()
-
-
-def translate_text(
-    text: str, source_lang: Optional[str] = None, model: Optional[str] = "gpt-4o-mini"
-) -> str:
-    """
-    Translate text to English using OpenAI's GPT model.
+    Translate text to English using specified model.
 
     Args:
         text (str): Text to translate
-        source_lang (str, optional): Source language (if known)
+        model (str, optional): Translation model to use
 
     Returns:
         str: Translated text
     """
     try:
-        # Split text into batches if too long
-        text_batches = split_text_into_batches(text)
-        translated_batches = []
+        # Determine translation function based on model
+        translation_func = gpt_response if model == "GPT" else claude_response
 
-        for batch in text_batches:
-            # Prepare translation prompt
-            messages = [
-                {
-                    "role": "system",
-                    "content": "You are a professional translator. Translate the given text to English accurately while preserving the original meaning and tone.",
-                },
-                {
-                    "role": "user",
-                    "content": f"Translate the following text to English{' from ' + source_lang if source_lang else ''}:\n\n{batch}",
-                },
-            ]
+        # Split and translate batches
+        translated_batches = [
+            translation_func(
+                system="You are a professional Japanese translator. Translate the text to English accurately.",
+                prompt=f"Translate the following text to English:\n\n{batch}",
+            )["response"]
+            for batch in split_text_batches(text)
+        ]
 
-            # Create translation request
-            translation_response = gpt_client.chat.completions.create(
-                model=model, messages=messages
-            )
-
-            # Add translated batch
-            translated_batches.append(
-                translation_response.choices[0].message.content.strip()
-            )
-
-        # Combine translated batches
-        return " ".join(translated_batches)
+        return " ".join(translated_batches).strip()
 
     except Exception as e:
-        st.error(f"Error translating text: {e}")
+        st.error(f"Translation error: {e}")
         return TRANSLATION_ERROR
 
 
 def main():
-    # Add this line to start with the sidebar collapsed
     st.set_page_config(initial_sidebar_state="collapsed")
-    st.title("Language Transcriber")
+    st.title("Japanese Transcriber")
 
-    # Sidebar for source language selection
-    st.sidebar.header("Translation Settings")
-    source_lang = st.sidebar.text_input(
-        "Source Language (Optional)", help="Language to be translated"
-    )
+    # Translation settings
+    with st.sidebar:
+        st.header("Translation Settings")
+        source_model = st.selectbox(
+            "Translation Model", ("GPT", "Claude"), help="Choose translation model"
+        )
 
-    source_model = st.sidebar.selectbox(
-        "Model Usage (Optional)", ("gpt-4o-mini", "gpt-4o"), help="GPT model to be used"
-    )
-
-    # File uploader
+    # File upload
     uploaded_file = st.file_uploader(
-        "Choose an image to transcribe", type=["png", "jpg", "jpeg", "gif", "bmp"]
+        "Upload Image", type=["png", "jpg", "jpeg", "gif", "bmp"]
     )
 
-    if uploaded_file is not None:
-        # Display uploaded image
-        st.image(uploaded_file, caption="Uploaded Image", use_container_width=True)
+    if not uploaded_file:
+        return
 
-        # Detect file type
-        file_details = filetype.guess(uploaded_file.getvalue())
+    # Display uploaded image
+    st.image(uploaded_file, caption="Uploaded Image", use_container_width=True)
 
-        if file_details and file_details.mime.startswith("image/"):
-            # Transcription
-            with st.spinner("Transcribing text from image..."):
-                transcription = transcribe_image(
-                    uploaded_file.getvalue(), file_details.mime, source_model
-                )
+    # Transcribe text
+    with st.spinner("Transcribing text..."):
+        transcription_func = (
+            claude_transcribe if source_model == "Claude" else gpt_transcribe
+        )
+        transcription = transcription_func(uploaded_file.getvalue(), uploaded_file.type)
 
-            # Display transcription
-            st.subheader("Transcribed Text")
-            st.text_area("Transcription", value=transcription, height=700)
+    # Handle transcription
+    if transcription == TRANSCRIBE_ERROR:
+        st.warning("No text could be transcribed from the image.")
+        return
 
-            # Translation
-            if transcription != TRANSCRIBE_ERROR:
-                with st.spinner("Translating text..."):
-                    translation = translate_text(
-                        transcription, source_lang, source_model
-                    )
+    # Display transcribed text
+    st.subheader("Transcribed Text")
+    st.text_area("Transcription", value=transcription, height=300)
 
-                # Display translation
-                st.subheader("Translated Text")
-                st.text_area("Translation", value=translation, height=700)
-            else:
-                st.warning("No text could be transcribed from the image.")
-        else:
-            st.error("Invalid image file. Please upload a valid image.")
+    # Translate text
+    with st.spinner("Translating text..."):
+        translation = translate_text(transcription, source_model)
+
+    # Display translation
+    st.subheader("Translated Text")
+    st.text_area("Translation", value=translation, height=300)
 
 
 if __name__ == "__main__":
-    # Check if OpenAI API key is set
-    if not OPENAI_API_KEY:
-        st.error(
-            "OpenAI API key is not set. Please set the OPENAI_API_KEY environment variable."
-        )
-    else:
-        main()
+    main()

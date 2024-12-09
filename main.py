@@ -1,8 +1,5 @@
-import os
 import math
-import base64
 
-from openai import OpenAI
 from filetype import filetype
 from typing import Optional, List
 from fastapi.responses import JSONResponse
@@ -15,63 +12,19 @@ load_dotenv(find_dotenv())
 # Initialize FastAPI app
 app = FastAPI(docs_url="/")
 
-# LLM constants
-TRANSCRIBE_ERROR = "No text found"
-TRANSLATION_ERROR = "Invalid translation"
-MODEL = "gpt-4o-mini"
+# Import constants from model module
+from model import (
+    generate_response,
+    transcribe_image,
+    TRANSLATION_ERROR,
+    DEFAULT_GPT_MODEL,
+    DEFAULT_CLAUDE_MODEL,
+)
 
-# ✋🏻🛑⛔️
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-
-async def transcribe_image(image: bytes, content_type: str) -> str:
+def split_text_batches(text: str, max_tokens: int = 1000) -> List[str]:
     """
-    Transcribe text from an image using OpenAI's GPT-4o vision model.
-
-    Args:
-        image (bytes): Image data
-        content_type (str): MIME type of the image
-
-    Returns:
-        str: Transcribed text or error message
-    """
-    gpt_client = OpenAI(api_key=OPENAI_API_KEY)
-
-    # Encode image to base64
-    base64_image = base64.b64encode(image).decode("utf-8")
-
-    # Create chat completion request
-    chat_response = gpt_client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": 'You are an AI transcribing text from images. Guidelines: 1. Transcribe clear, legible text. 2. Respect original formatting. 3. If no clear text is visible or if the content is irrelevant, respond with "No recognizable text content". 4. Transcribe exactly as seen.',
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Transcribe the clear, legible text from this image. If no relevant text, respond with '{TRANSCRIBE_ERROR}'.",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{content_type};base64,{base64_image}"
-                        },
-                    },
-                ],
-            },
-        ],
-    )
-
-    return chat_response.choices[0].message.content.strip()
-
-
-def split_text_into_batches(text: str, max_tokens: int = 1000) -> List[str]:
-    """
-    Split long text into batches respecting approximate token limit.
+    Split text into batches respecting approximate token limit.
 
     Args:
         text (str): Input text to be split
@@ -80,70 +33,66 @@ def split_text_into_batches(text: str, max_tokens: int = 1000) -> List[str]:
     Returns:
         List[str]: List of text batches
     """
-    # Rough estimate: 1 token is approximately 4 characters
-    tokens_estimate = len(text) // 4
-
-    # If text is short enough, return as single batch
-    if tokens_estimate <= max_tokens:
+    # Rough token estimate: 1 token ≈ 4 characters
+    if len(text) / 4 <= max_tokens:
         return [text]
 
     # Calculate number of batches
-    num_batches = math.ceil(tokens_estimate / max_tokens)
-
-    # Split text into roughly equal parts
+    num_batches = math.ceil(len(text) / (max_tokens * 4))
     batch_size = len(text) // num_batches
-    batches = []
 
-    for i in range(num_batches):
-        start = i * batch_size
-        end = (i + 1) * batch_size if i < num_batches - 1 else len(text)
-        batches.append(text[start:end])
-
-    return batches
+    return [text[i * batch_size : (i + 1) * batch_size] for i in range(num_batches)]
 
 
-def translate_text(text: str, source_lang: Optional[str] = None) -> str:
+async def transcribe_async(image: bytes, content_type: str) -> str:
     """
-    Translate text to English using OpenAI's GPT model.
+    Async wrapper for image transcription.
+
+    Args:
+        image (bytes): Image data
+        content_type (str): MIME type of the image
+
+    Returns:
+        str: Transcribed text or error message
+    """
+    return transcribe_image(image, content_type)
+
+
+async def translate_async(text: str, model: str = "GPT") -> str:
+    """
+    Async wrapper for text translation.
 
     Args:
         text (str): Text to translate
-        source_lang (str, optional): Source language (if known)
+        model (str, optional): Translation model to use
 
     Returns:
         str: Translated text
     """
-    gpt_client = OpenAI(api_key=OPENAI_API_KEY)
-
     try:
-        # Split text into batches if too long
-        text_batches = split_text_into_batches(text)
+        # Determine translation function's specific system prompt
+        system_prompt = "You are a professional translator. Translate the given text to English accurately while preserving the original meaning and tone."
+
+        # Split and translate batches
         translated_batches = []
-
-        for batch in text_batches:
+        for batch in split_text_batches(text):
             # Prepare translation prompt
-            messages = [
-                {
-                    "role": "system",
-                    "content": "You are a professional translator. Translate the given text to English accurately while preserving the original meaning and tone.",
-                },
-                {
-                    "role": "user",
-                    "content": f"Translate the following text to English{' from ' + source_lang if source_lang else ''}:\n\n{batch}",
-                },
-            ]
+            prompt = f"Translate the following text to English:\n\n{batch}"
 
-            # Create translation request
-            translation_response = gpt_client.chat.completions.create(
-                model=MODEL, messages=messages
+            # Use the appropriate model
+            model_to_use = DEFAULT_GPT_MODEL if model == "GPT" else DEFAULT_CLAUDE_MODEL
+            response = generate_response(
+                model=model_to_use,
+                system=system_prompt,
+                prompt=prompt,
+                client_type=model,
             )
 
-            # Add translated batch
-            translated_batches.append(
-                translation_response.choices[0].message.content.strip()
-            )
+            if response and "response" in response:
+                translated_batches.append(response["response"].strip())
+            else:
+                return TRANSLATION_ERROR
 
-        # Combine translated batches
         return " ".join(translated_batches)
 
     except Exception as e:
@@ -180,7 +129,7 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Invalid image file")
 
         # Transcribe the image
-        transcription = await transcribe_image(contents, detected_type.mime)
+        transcription = await transcribe_async(contents, detected_type.mime)
 
         # Return response
         return JSONResponse(
@@ -204,14 +153,15 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
 
 @app.post("/translate")
 async def translate_endpoint(
-    text: str = Body(...), source_lang: Optional[str] = Body(None)
+    text: str = Body(...),
+    model: Optional[str] = Body("GPT"),
 ):
     """
     Endpoint to translate text to English.
 
     Args:
         text (str): Text to translate
-        source_lang (str, optional): Source language
+        model (str, optional): Translation model to use (GPT or Claude)
 
     Returns:
         JSONResponse with translation details
@@ -221,15 +171,21 @@ async def translate_endpoint(
         if not text or len(text.strip()) == 0:
             raise HTTPException(status_code=400, detail="Empty text provided")
 
+        # Validate model
+        if model not in ["GPT", "Claude"]:
+            raise HTTPException(
+                status_code=400, detail="Invalid model. Use 'GPT' or 'Claude'."
+            )
+
         # Translate text
-        translated_text = translate_text(text, source_lang)
+        translated_text = await translate_async(text, model)
 
         # Return response
         return JSONResponse(
             content={
                 "translation": {
                     "original_text": text,
-                    "source_language": source_lang,
+                    "model_used": model,
                     "translated_text": translated_text,
                 }
             }
