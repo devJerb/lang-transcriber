@@ -53,7 +53,12 @@ def translate_text(text: str, model: str = "GPT") -> str:
         translated_batches = [
             translation_func(
                 system="You are a professional Japanese translator. Translate the text to English accurately.",
-                prompt=f"Translate the following text to English:\n\n{batch}",
+                prompt=f"""
+                Translate the following text to English:\n\n{batch}
+                Instructions:
+                1. ONLY provide the translation, nothing else.
+                2. Translate EVERYTHING that was transcribed.
+                """,
             )["response"]
             for batch in split_text_batches(text)
         ]

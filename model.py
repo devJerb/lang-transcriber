@@ -199,7 +199,7 @@ def transcribe_image(
             messages=[
                 {
                     "role": "assistant",
-                    "content": "You are a professional Japanese transcriber. Transcribe only clear, legible text exactly as seen.",
+                    "content": "You are a professional Japanese transcriber. Transcribe all clear, legible text exactly as seen regardless of image quality.",
                 },
                 {
                     "role": "user",
@@ -214,7 +214,7 @@ def transcribe_image(
                         },
                         {
                             "type": "text",
-                            "text": f"Transcribe the clear, legible text from this image. If no relevant text, respond with '{TRANSCRIBE_ERROR}'.",
+                            "text": f"Transcribe the text from this image. If no text, respond with '{TRANSCRIBE_ERROR}'.",
                         },
                     ],
                 },
