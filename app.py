@@ -1,5 +1,6 @@
 import math
 import streamlit as st
+import time
 from typing import List
 
 from model import (
@@ -49,6 +50,9 @@ def translate_text(text: str, model: str = "GPT") -> str:
         # Determine translation function based on model
         translation_func = gpt_response if model == "GPT" else claude_response
 
+        # Start timing the translation
+        translation_start_time = time.time()
+
         # Split and translate batches
         translated_batches = [
             translation_func(
@@ -62,6 +66,13 @@ def translate_text(text: str, model: str = "GPT") -> str:
             )["response"]
             for batch in split_text_batches(text)
         ]
+
+        # Calculate translation time
+        translation_end_time = time.time()
+        translation_time = translation_end_time - translation_start_time
+
+        # Log translation time
+        st.write(f"Translation Time: {translation_time:.2f} seconds")
 
         return " ".join(translated_batches).strip()
 
@@ -94,10 +105,20 @@ def main():
 
     # Transcribe text
     with st.spinner("Transcribing text..."):
+        # Start timing the transcription
+        transcription_start_time = time.time()
+
         transcription_func = (
             claude_transcribe if source_model == "Claude" else gpt_transcribe
         )
         transcription = transcription_func(uploaded_file.getvalue(), uploaded_file.type)
+
+        # Calculate transcription time
+        transcription_end_time = time.time()
+        transcription_time = transcription_end_time - transcription_start_time
+
+        # Log transcription time
+        st.write(f"Transcription Time: {transcription_time:.2f} seconds")
 
     # Handle transcription
     if transcription == TRANSCRIBE_ERROR:
